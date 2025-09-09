@@ -57,5 +57,24 @@
           };
         }
       );
+      packages = forEachSupportedSystem (
+        { pkgs }:
+        {
+          default =
+            (pkgs.makeRustPlatform {
+              rustc = pkgs.rustToolchain;
+              cargo = pkgs.rustToolchain;
+            }).buildRustPackage
+              {
+                name = "scripts";
+                src = pkgs.lib.cleanSource ./.;
+                cargoLock = {
+                  lockFile = ./Cargo.lock;
+                  allowBuiltinFetchGit = true;
+                };
+              };
+        }
+      );
+
     };
 }
