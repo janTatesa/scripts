@@ -183,7 +183,7 @@ fn scrollback(editor_name: String) -> Result<()> {
         "({CONTROL_SEQUENCES}|{INDEPENDENT_CONTROL_FUNCTIONS}|{COMMAND_STRINGS}|{CARRIAGE_RETURN})"
     );
 
-    let str = Regex::new(re)?.replace_all(&input, "");
+    let str = Regex::new(re)?.replace_all(input.trim(), "");
     run_command_with_stdio(&editor_name, None, Stdio::inherit(), Some(str.as_bytes()))?;
     Ok(())
 }
