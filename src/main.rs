@@ -109,11 +109,11 @@ fn run_command_with_stdio<'a>(
 }
 
 fn nixos(open_editor: Option<String>, update: bool, flake: PathBuf, device: String) -> Result<()> {
+    env::set_current_dir(&flake)?;
     if let Some(editor) = open_editor {
         run_command(&editor, None)?;
     }
 
-    env::set_current_dir(&flake)?;
     run_command("git", ["add", "."])?;
     let args = ["os", "switch", "-H", &device, "."]
         .into_iter()
