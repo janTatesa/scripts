@@ -12,10 +12,9 @@ use color_eyre::{
     Result,
     eyre::{ContextCompat, OptionExt, eyre},
 };
-use notify_rust::Notification;
+
 use regex::Regex;
 use swayipc::NodeType;
-use wl_clipboard_rs::copy::{MimeType, Options};
 
 #[derive(Parser)]
 struct Cli {
@@ -131,8 +130,16 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
     const FMT: &str = "screenshot-%Y-%m-%d-%H:%M:%S.png";
     let file_name = Local::now().format(FMT).to_string();
     path.push(file_name);
-    match area {
-        ScreenshotArea::Fullscreen => run_command("grim", iter::once(path.to_str().unwrap())),
+    let grim = |args: Option<&str>| {
+        run_command_with_stdio(
+            "grim",
+            args.into_iter().chain(iter::once("-")),
+            Stdio::piped(),
+            None,
+        )
+    };
+    let bytes = match area {
+        ScreenshotArea::Fullscreen => grim(None),
         ScreenshotArea::Window => {
             let sway_tree = swayipc::Connection::new()?.get_tree()?;
             let rect = sway_tree
@@ -140,7 +147,7 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
                 .ok_or_eyre("Cannot get focused window")?
                 .rect;
             let rect_formatted = format!("{},{} {}x{}", rect.x, rect.y, rect.width, rect.height);
-            run_command("grim", ["-g", &rect_formatted, path.to_str().unwrap()])
+            grim(Some(&rect_formatted))
         }
         ScreenshotArea::Region { slurp_fg, slurp_bg } => {
             let slurp_output = run_command_with_stdio(
@@ -150,24 +157,30 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
                 None,
             )?;
             let region = String::from_utf8(slurp_output)?;
-            run_command("grim", ["-g", region.trim(), path.to_str().unwrap()])
+            grim(Some(region.trim()))
         }
     }?;
 
-    wl_clipboard_rs::copy::copy(
-        Options::new(),
-        wl_clipboard_rs::copy::Source::Bytes(fs::read(&path)?.into_boxed_slice()),
-        MimeType::Autodetect,
-    )?;
+    fs::create_dir_all(path.parent().unwrap())?;
+    fs::write(&path, &bytes)?;
 
-    Notification::new()
-        .summary("Screenshot")
-        .body(&format!(
-            "File saved as {}, and copied to clipboard",
-            path.to_str().unwrap()
-        ))
-        .image(&path)?
-        .show()?;
+    // wl_cliboard_rs api sucked pretty much
+    run_command_with_stdio("wl-copy", None, Stdio::inherit(), Some(&bytes))?;
+    //notify-rs was slow for some reason
+    run_command(
+        "notify-send",
+        [
+            "Screenshot",
+            &format!(
+                "File saved as {} and copied to clipboard",
+                path.to_str().unwrap()
+            ),
+            "-t",
+            "6000",
+            "-i",
+            path.to_str().unwrap(),
+        ],
+    )?;
     Ok(())
 }
 
