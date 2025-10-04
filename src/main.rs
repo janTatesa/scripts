@@ -7,7 +7,7 @@ use std::{
 };
 
 use chrono::Local;
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use color_eyre::{
     Result,
     eyre::{ContextCompat, OptionExt, eyre},
@@ -23,14 +23,19 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Script {
-    Nixos {
-        #[arg(long)]
-        open_editor: bool,
+enum NixosAction {
+    Configure {
         #[arg(long, env = "EDITOR")]
         editor_name: String,
-        #[arg(long, action = ArgAction::SetTrue)]
-        update: bool,
+    },
+    Update,
+}
+
+#[derive(Subcommand)]
+enum Script {
+    Nixos {
+        #[command(subcommand)]
+        action: NixosAction,
         #[arg(long, env = "NH_FLAKE")]
         flake: PathBuf,
         #[arg(long, env = "DEVICE")]
@@ -64,12 +69,15 @@ fn main() -> Result<()> {
 
     match Cli::parse().script {
         Script::Nixos {
-            open_editor,
-            editor_name,
-            update,
+            action: NixosAction::Configure { editor_name },
             flake,
             device,
-        } => nixos(open_editor.then_some(editor_name), update, flake, device),
+        } => nixos_configure(editor_name, flake, device),
+        Script::Nixos {
+            action: NixosAction::Update,
+            flake,
+            device,
+        } => nixos_update(flake, device),
         Script::Scrollback { editor_name } => scrollback(editor_name),
         Script::Screenshot { area } => screenshot(area),
     }?;
@@ -78,15 +86,20 @@ fn main() -> Result<()> {
 }
 
 fn run_command<'a>(command: &'a str, args: impl IntoIterator<Item = &'a str>) -> Result<()> {
-    run_command_with_stdio(command, args, Stdio::inherit(), None).map(|_| ())
+    run_command_with_stdio(command, args, false, None).map(|_| ())
 }
 
 fn run_command_with_stdio<'a>(
     command: &'a str,
     args: impl IntoIterator<Item = &'a str>,
-    stdout: Stdio,
+    pipe_stdout: bool,
     stdin: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
+    let stdout = match pipe_stdout {
+        true => Stdio::piped(),
+        false => Stdio::inherit(),
+    };
+
     let mut cmd = Command::new(command)
         .args(args)
         .stdout(stdout)
@@ -98,28 +111,37 @@ fn run_command_with_stdio<'a>(
 
     let out = cmd.wait_with_output()?;
     if !out.status.success() {
-        return Err(eyre!(
-            "Command {command} exited with exit status {}",
-            out.status
-        ));
+        let error_msg = if pipe_stdout && let Ok(stdout) = String::from_utf8(out.stdout) {
+            eyre!(
+                "Command {command} exited with exit status {} and output {stdout}",
+                out.status
+            )
+        } else {
+            eyre!("Command {command} exited with exit status {}", out.status)
+        };
+
+        return Err(error_msg);
     }
 
     Ok(out.stdout)
 }
 
-fn nixos(open_editor: Option<String>, update: bool, flake: PathBuf, device: String) -> Result<()> {
+fn nixos_configure(editor_name: String, flake: PathBuf, device: String) -> Result<()> {
     env::set_current_dir(&flake)?;
-    if let Some(editor) = open_editor {
-        run_command(&editor, None)?;
-    }
-
+    run_command(&editor_name, None)?;
     run_command("git", ["add", "."])?;
-    let args = ["os", "switch", "-H", &device, "."]
-        .into_iter()
-        .chain(update.then_some("--update"));
+    let args = ["os", "switch", "-H", &device, "."];
     run_command("nh", args)?;
-    run_command("git", ["commit", "-am", "update"])?;
+    run_command("git", ["commit", "-a"])?;
     run_command("git", iter::once("push"))?;
+    Ok(())
+}
+
+fn nixos_update(flake: PathBuf, device: String) -> Result<()> {
+    env::set_current_dir(&flake)?;
+    run_command("git", ["add", "."])?;
+    let args = ["os", "switch", "-H", &device, ".", "--update"];
+    run_command("nh", args)?;
     Ok(())
 }
 
@@ -133,11 +155,14 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
     let grim = |args: Option<&str>| {
         run_command_with_stdio(
             "grim",
-            args.into_iter().chain(iter::once("-")),
-            Stdio::piped(),
+            args.into_iter()
+                .flat_map(|region| ["-g", region])
+                .chain(iter::once("-")),
+            true,
             None,
         )
     };
+
     let bytes = match area {
         ScreenshotArea::Fullscreen => grim(None),
         ScreenshotArea::Window => {
@@ -150,12 +175,8 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
             grim(Some(&rect_formatted))
         }
         ScreenshotArea::Region { slurp_fg, slurp_bg } => {
-            let slurp_output = run_command_with_stdio(
-                "slurp",
-                ["-c", &slurp_fg, "-b", &slurp_bg],
-                Stdio::piped(),
-                None,
-            )?;
+            let slurp_output =
+                run_command_with_stdio("slurp", ["-c", &slurp_fg, "-b", &slurp_bg], true, None)?;
             let region = String::from_utf8(slurp_output)?;
             grim(Some(region.trim()))
         }
@@ -165,7 +186,7 @@ fn screenshot(area: ScreenshotArea) -> Result<()> {
     fs::write(&path, &bytes)?;
 
     // wl_cliboard_rs api sucked pretty much
-    run_command_with_stdio("wl-copy", None, Stdio::inherit(), Some(&bytes))?;
+    run_command_with_stdio("wl-copy", None, true, Some(&bytes))?;
     //notify-rs was slow for some reason
     run_command(
         "notify-send",
@@ -197,6 +218,6 @@ fn scrollback(editor_name: String) -> Result<()> {
     );
 
     let str = Regex::new(re)?.replace_all(input.trim(), "");
-    run_command_with_stdio(&editor_name, None, Stdio::inherit(), Some(str.as_bytes()))?;
+    run_command_with_stdio(&editor_name, None, true, Some(str.as_bytes()))?;
     Ok(())
 }
