@@ -143,7 +143,7 @@ fn nixos_configure(
     run_command("git", ["add", "."])?;
     let args = ["os", "switch", "-H", &device, "."]
         .into_iter()
-        .chain(update.then_some("update"));
+        .chain(update.then_some("--update"));
     run_command("nh", args)?;
     run_command("git", ["commit", "-a"])?;
     run_command("git", iter::once("push"))?;
