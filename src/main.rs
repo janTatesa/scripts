@@ -27,6 +27,8 @@ enum NixosAction {
     Configure {
         #[arg(long, env = "EDITOR")]
         editor_name: String,
+        #[arg(long)]
+        update: bool,
     },
     Update,
 }
@@ -69,10 +71,14 @@ fn main() -> Result<()> {
 
     match Cli::parse().script {
         Script::Nixos {
-            action: NixosAction::Configure { editor_name },
+            action:
+                NixosAction::Configure {
+                    editor_name,
+                    update,
+                },
             flake,
             device,
-        } => nixos_configure(editor_name, flake, device),
+        } => nixos_configure(editor_name, update, flake, device),
         Script::Nixos {
             action: NixosAction::Update,
             flake,
@@ -126,11 +132,18 @@ fn run_command_with_stdio<'a>(
     Ok(out.stdout)
 }
 
-fn nixos_configure(editor_name: String, flake: PathBuf, device: String) -> Result<()> {
+fn nixos_configure(
+    editor_name: String,
+    update: bool,
+    flake: PathBuf,
+    device: String,
+) -> Result<()> {
     env::set_current_dir(&flake)?;
     run_command(&editor_name, None)?;
     run_command("git", ["add", "."])?;
-    let args = ["os", "switch", "-H", &device, "."];
+    let args = ["os", "switch", "-H", &device, "."]
+        .into_iter()
+        .chain(update.then_some("update"));
     run_command("nh", args)?;
     run_command("git", ["commit", "-a"])?;
     run_command("git", iter::once("push"))?;
