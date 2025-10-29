@@ -231,6 +231,6 @@ fn scrollback(editor_name: String) -> Result<()> {
     );
 
     let str = Regex::new(re)?.replace_all(input.trim(), "");
-    run_command_with_stdio(&editor_name, None, true, Some(str.as_bytes()))?;
+    run_command_with_stdio(&editor_name, None, false, Some(str.as_bytes()))?;
     Ok(())
 }
