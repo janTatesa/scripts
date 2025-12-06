@@ -40,8 +40,6 @@ enum Script {
         action: NixosAction,
         #[arg(long, env = "NH_FLAKE")]
         flake: PathBuf,
-        #[arg(long, env = "DEVICE")]
-        device: String,
     },
 
     Scrollback {
@@ -77,13 +75,11 @@ fn main() -> Result<()> {
                     update,
                 },
             flake,
-            device,
-        } => nixos_configure(editor_name, update, flake, device),
+        } => nixos_configure(editor_name, update, flake),
         Script::Nixos {
             action: NixosAction::Update,
             flake,
-            device,
-        } => nixos_update(flake, device),
+        } => nixos_update(flake),
         Script::Scrollback { editor_name } => scrollback(editor_name),
         Script::Screenshot { area } => screenshot(area),
     }?;
@@ -132,16 +128,11 @@ fn run_command_with_stdio<'a>(
     Ok(out.stdout)
 }
 
-fn nixos_configure(
-    editor_name: String,
-    update: bool,
-    flake: PathBuf,
-    device: String,
-) -> Result<()> {
+fn nixos_configure(editor_name: String, update: bool, flake: PathBuf) -> Result<()> {
     env::set_current_dir(&flake)?;
     run_command(&editor_name, None)?;
     run_command("git", ["add", "."])?;
-    let args = ["os", "switch", "-H", &device, "."]
+    let args = ["os", "switch", "."]
         .into_iter()
         .chain(update.then_some("--update"));
     run_command("nh", args)?;
@@ -150,10 +141,10 @@ fn nixos_configure(
     Ok(())
 }
 
-fn nixos_update(flake: PathBuf, device: String) -> Result<()> {
+fn nixos_update(flake: PathBuf) -> Result<()> {
     env::set_current_dir(&flake)?;
     run_command("git", ["add", "."])?;
-    let args = ["os", "switch", "-H", &device, ".", "--update"];
+    let args = ["os", "switch", ".", "--update"];
     run_command("nh", args)?;
     Ok(())
 }
